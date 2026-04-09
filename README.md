@@ -38,6 +38,12 @@ In **Vercel → Project → Settings → Environment Variables**, set for **Prod
 
 Vercel **does not allow hyphens** in env names, so `GHL_sub-account_Location` cannot be added there. The app reads `GHL_LOCATION_ID` first; that is enough for production.
 
+### After “Generate & Send” (Accounts pipeline)
+
+The API moves the contact’s opportunity in the **Accounts** pipeline to the **next stage** after a successful email (e.g. *Send Payment Plan* → *Payment Plan Sent*). It uses stage order from GHL’s pipelines response.
+
+Optional: set **`GHL_ACCOUNTS_TARGET_STAGE_ID`** to the UUID of *Payment Plan Sent* (or any target stage) if you want to always jump there, or if stage order is not returned by the API. Copy the stage id from GHL (pipeline settings / API).
+
 Do **not** commit `.env`. Do **not** store `VERCEL_TOKEN` or `GITHUB_TOKEN` in `.env` long term—use the Vercel/GitHub UIs or OS credential helpers. If a token was ever pasted into chat or logs, **revoke and create a new one**.
 
 ## Deploy on Vercel

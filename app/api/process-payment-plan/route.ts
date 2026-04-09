@@ -19,6 +19,8 @@ type GhlPipeline = {
   _id?: string;
   name?: string;
   pipelineName?: string;
+  stages?: unknown;
+  pipelineStages?: unknown;
 };
 
 type GhlOpportunity = {
@@ -26,7 +28,83 @@ type GhlOpportunity = {
   _id?: string;
   pipelineId?: string;
   pipeline_id?: string;
+  pipelineStageId?: string;
+  pipeline_stage_id?: string;
+  name?: string;
+  status?: string;
+  monetaryValue?: number;
+  assignedTo?: string;
+  contactId?: string;
+  customFields?: unknown;
 };
+
+type OrderedStage = { id: string; name: string; position: number };
+
+const GHL_OPPORTUNITIES_VERSION = "2021-07-28";
+
+function extractOrderedStages(pipeline: GhlPipeline): OrderedStage[] {
+  const raw = pipeline.stages ?? pipeline.pipelineStages;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item, index) => {
+      const s = item as Record<string, unknown>;
+      const id = String(s.id ?? s._id ?? "");
+      const name = String(s.name ?? "");
+      const position =
+        typeof s.position === "number"
+          ? s.position
+          : typeof s.order === "number"
+            ? (s.order as number)
+            : index;
+      return { id, name, position };
+    })
+    .filter((x) => x.id.length > 0)
+    .sort((a, b) => a.position - b.position);
+}
+
+async function getGhlOpportunity(params: { apiKey: string; opportunityId: string }): Promise<GhlOpportunity | null> {
+  const response = await fetch(
+    `https://services.leadconnectorhq.com/opportunities/${params.opportunityId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${params.apiKey}`,
+        Version: GHL_OPPORTUNITIES_VERSION,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const json = (await response.json()) as Record<string, unknown>;
+  const opp = (json.opportunity ?? json.data ?? json) as GhlOpportunity;
+  return opp && typeof opp === "object" ? opp : null;
+}
+
+async function putGhlOpportunityFull(params: {
+  opportunityId: string;
+  apiKey: string;
+  body: Record<string, unknown>;
+}) {
+  const response = await fetch(
+    `https://services.leadconnectorhq.com/opportunities/${params.opportunityId}`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${params.apiKey}`,
+        Version: GHL_OPPORTUNITIES_VERSION,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(params.body)
+    }
+  );
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`GHL opportunity stage update failed: ${response.status} ${errorText}`);
+  }
+}
 
 async function updateGhlOpportunity(params: {
   opportunityId: string;
@@ -40,7 +118,7 @@ async function updateGhlOpportunity(params: {
       method: "PUT",
       headers: {
         Authorization: `Bearer ${params.apiKey}`,
-        Version: "2021-07-28",
+        Version: GHL_OPPORTUNITIES_VERSION,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -56,10 +134,10 @@ async function updateGhlOpportunity(params: {
   }
 }
 
-async function findAccountsPipelineId(params: {
+async function fetchAccountsPipeline(params: {
   apiKey: string;
   locationId: string;
-}): Promise<string> {
+}): Promise<GhlPipeline | null> {
   const response = await fetch(
     `https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${encodeURIComponent(
       params.locationId
@@ -67,14 +145,14 @@ async function findAccountsPipelineId(params: {
     {
       headers: {
         Authorization: `Bearer ${params.apiKey}`,
-        Version: "2021-07-28",
+        Version: GHL_OPPORTUNITIES_VERSION,
         "Content-Type": "application/json"
       }
     }
   );
 
   if (!response.ok) {
-    return "";
+    return null;
   }
 
   const data = (await response.json()) as { pipelines?: GhlPipeline[] };
@@ -83,7 +161,15 @@ async function findAccountsPipelineId(params: {
     const name = String(p.name ?? p.pipelineName ?? "").trim().toLowerCase();
     return name === "accounts";
   });
-  return String(accounts?.id ?? accounts?._id ?? "");
+  return accounts ?? null;
+}
+
+async function findAccountsPipelineId(params: {
+  apiKey: string;
+  locationId: string;
+}): Promise<string> {
+  const pipeline = await fetchAccountsPipeline(params);
+  return String(pipeline?.id ?? pipeline?._id ?? "");
 }
 
 async function findContactOpportunitiesInPipeline(params: {
@@ -101,7 +187,7 @@ async function findContactOpportunitiesInPipeline(params: {
   const response = await fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${params.apiKey}`,
-      Version: "2021-07-28",
+      Version: GHL_OPPORTUNITIES_VERSION,
       "Content-Type": "application/json"
     }
   });
@@ -148,6 +234,108 @@ async function syncAccountsPipelineOpportunityFields(params: {
       })
     )
   );
+}
+
+function resolveNextStageId(
+  stages: OrderedStage[],
+  currentStageId: string,
+  explicitTargetStageId: string
+): string | undefined {
+  if (!currentStageId) {
+    return undefined;
+  }
+  if (
+    explicitTargetStageId &&
+    stages.some((s) => s.id === explicitTargetStageId) &&
+    explicitTargetStageId !== currentStageId
+  ) {
+    return explicitTargetStageId;
+  }
+  const idx = stages.findIndex((s) => s.id === currentStageId);
+  if (idx < 0 || idx >= stages.length - 1) {
+    return undefined;
+  }
+  return stages[idx + 1]?.id;
+}
+
+async function advanceAccountsPipelineOpportunitiesToNextStage(params: {
+  apiKey: string;
+  locationId: string;
+  contactId: string;
+}): Promise<{ updatedOpportunityIds: string[]; skippedReason?: string }> {
+  const accountsPipeline = await fetchAccountsPipeline({
+    apiKey: params.apiKey,
+    locationId: params.locationId
+  });
+  if (!accountsPipeline) {
+    return { updatedOpportunityIds: [], skippedReason: "Accounts pipeline not found." };
+  }
+
+  const pipelineId = String(accountsPipeline.id ?? accountsPipeline._id ?? "");
+  if (!pipelineId) {
+    return { updatedOpportunityIds: [], skippedReason: "Accounts pipeline id missing." };
+  }
+
+  const explicitTarget = getEnv("GHL_ACCOUNTS_TARGET_STAGE_ID");
+  const stages = extractOrderedStages(accountsPipeline);
+  if (stages.length < 2 && !explicitTarget) {
+    return {
+      updatedOpportunityIds: [],
+      skippedReason:
+        "Accounts pipeline stages not available from API. Set GHL_ACCOUNTS_TARGET_STAGE_ID to your Payment Plan Sent stage id, or confirm the pipeline returns stages."
+    };
+  }
+
+  const opportunityIds = await findContactOpportunitiesInPipeline({
+    apiKey: params.apiKey,
+    locationId: params.locationId,
+    contactId: params.contactId,
+    pipelineId
+  });
+
+  const updatedOpportunityIds: string[] = [];
+
+  for (const opportunityId of opportunityIds) {
+    const opp = await getGhlOpportunity({ apiKey: params.apiKey, opportunityId });
+    if (!opp) continue;
+
+    const oppPipelineId = String(opp.pipelineId ?? opp.pipeline_id ?? "");
+    if (oppPipelineId !== pipelineId) continue;
+
+    const currentStageId = String(opp.pipelineStageId ?? opp.pipeline_stage_id ?? "");
+    let nextStageId: string | undefined;
+    if (explicitTarget && stages.length === 0) {
+      nextStageId = explicitTarget !== currentStageId ? explicitTarget : undefined;
+    } else {
+      nextStageId = resolveNextStageId(stages, currentStageId, explicitTarget);
+    }
+    if (!nextStageId) continue;
+
+    const contactId = String(opp.contactId ?? params.contactId);
+    const body: Record<string, unknown> = {
+      contactId,
+      pipelineId,
+      pipelineStageId: nextStageId,
+      name: opp.name ?? "",
+      status: opp.status ?? "open",
+      monetaryValue: typeof opp.monetaryValue === "number" ? opp.monetaryValue : 0
+    };
+    if (opp.assignedTo) {
+      body.assignedTo = opp.assignedTo;
+    }
+    if (Array.isArray(opp.customFields) && opp.customFields.length > 0) {
+      body.customFields = opp.customFields;
+    }
+
+    await putGhlOpportunityFull({
+      opportunityId,
+      apiKey: params.apiKey,
+      body
+    });
+    updatedOpportunityIds.push(opportunityId);
+  }
+
+  return { updatedOpportunityIds };
 }
 
 async function uploadPdfAttachmentToGhl(params: {
@@ -313,12 +501,19 @@ export async function POST(request: Request) {
       contactId: contact_id,
       emailTo: contactEmail,
       subject: "Your Payment Plan",
-      html: `<p>Please find your payment plan attached.</p><p><strong>Summary:</strong> ${paymentPlanSummary}</p>`,
+      html: "<p>Please find your payment plan attached!</p>",
       attachmentUrls: [uploadedPdfUrl]
     });
 
+    const stageResult = await advanceAccountsPipelineOpportunitiesToNextStage({
+      apiKey: ghlApiKey,
+      locationId: ghlLocationId,
+      contactId: contact_id
+    });
+
     return NextResponse.json({
-      message: "Payment plan generated, GHL updated, and email sent with PDF attachment.",
+      message:
+        "Payment plan generated, GHL updated, email sent with PDF attachment, and Accounts pipeline stage advanced where applicable.",
       data: {
         opp_id,
         contact_id,
@@ -329,7 +524,9 @@ export async function POST(request: Request) {
         pdf_file_name: pdfFileName,
         pdf_bytes: pdfBuffer.length,
         email_to: contactEmail,
-        uploaded_pdf_url: uploadedPdfUrl
+        uploaded_pdf_url: uploadedPdfUrl,
+        accounts_pipeline_stage_updated_ids: stageResult.updatedOpportunityIds,
+        accounts_pipeline_stage_note: stageResult.skippedReason
       }
     });
   } catch (error) {
