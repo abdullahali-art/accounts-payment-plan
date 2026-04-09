@@ -61,7 +61,7 @@ After deploy, use your Vercel URL with `opp_id` and `contact_id` in the query st
 That message usually refers to **`vercel deploy` from the CLI** using a token/user that isn’t on the Vercel team **Abdullah’s projects**. Fixes:
 
 1. **Prefer Git → Vercel:** Push to `main` and let Vercel build from the connected GitHub repo (no CLI needed). In the project: **Settings → Git** — confirm **abdullahali-art/accounts-payment-plan** and **Production Branch = main**.
-2. **Match Git author to GitHub:** In this repo, `git config user.name` / `user.email` should match the GitHub account that owns the repo (see [GitHub noreply emails](https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address)).
+2. **Match Git author to GitHub:** Commits carry `user.name` / `user.email` (Git metadata). That is **separate** from a **GitHub PAT** (`GITHUB_TOKEN`), which only proves identity to GitHub’s API. This repo’s local Git author is set to **abdullahali-art** using GitHub’s private noreply address when your real email isn’t public on your profile (see [commit email address](https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address)).
 3. **CLI only if you’re on the team:** Add your user to the Vercel team, or in Vercel **Account Settings → Authentication** connect the same GitHub account you use for the repo.
 4. **Manual deploy:** Vercel dashboard → **Deployments** → **⋯** on latest → **Redeploy** (use latest from Git if prompted).
 
