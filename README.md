@@ -2,6 +2,13 @@
 
 Next.js (App Router) app to build student payment plans, download PDFs, update GoHighLevel opportunity fields, and email the contact with the PDF attached.
 
+## Live site
+
+- **Production:** [https://accounts-payment-plan.vercel.app](https://accounts-payment-plan.vercel.app)
+- **Repository:** [github.com/abdullahali-art/accounts-payment-plan](https://github.com/abdullahali-art/accounts-payment-plan) (private)
+
+Example: `https://accounts-payment-plan.vercel.app/?opp_id=YOUR_OPP_ID&contact_id=YOUR_CONTACT_ID`
+
 ## Requirements
 
 - Node.js 18+
@@ -22,15 +29,16 @@ Open [http://localhost:3000](http://localhost:3000) with query params, for examp
 
 ## Environment variables (Vercel)
 
-Add these in **Project → Settings → Environment Variables** (Production, Preview, and Development as needed):
+In **Vercel → Project → Settings → Environment Variables**, set for **Production** (and Preview if you use branch previews):
 
 | Name | Description |
 |------|-------------|
-| `GHL_API_KEY` | GHL Private Integration Token |
+| `GHL_API_KEY` | GHL Private Integration Token (mark as sensitive) |
 | `GHL_LOCATION_ID` | Sub-account location ID |
-| `GHL_sub-account_Location` | Same as location ID if you prefer this variable name (optional fallback) |
 
-Do **not** commit `.env`; use Vercel’s dashboard only.
+Vercel **does not allow hyphens** in env names, so `GHL_sub-account_Location` cannot be added there. The app reads `GHL_LOCATION_ID` first; that is enough for production.
+
+Do **not** commit `.env`. Do **not** store `VERCEL_TOKEN` or `GITHUB_TOKEN` in `.env` long term—use the Vercel/GitHub UIs or OS credential helpers. If a token was ever pasted into chat or logs, **revoke and create a new one**.
 
 ## Deploy on Vercel
 
