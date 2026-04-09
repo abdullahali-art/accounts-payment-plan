@@ -56,6 +56,15 @@ Do **not** commit `.env`. Do **not** store `VERCEL_TOKEN` or `GITHUB_TOKEN` in `
 
 After deploy, use your Vercel URL with `opp_id` and `contact_id` in the query string.
 
+### If deployments don’t update (or Vercel emails “not a member of the team”)
+
+That message usually refers to **`vercel deploy` from the CLI** using a token/user that isn’t on the Vercel team **Abdullah’s projects**. Fixes:
+
+1. **Prefer Git → Vercel:** Push to `main` and let Vercel build from the connected GitHub repo (no CLI needed). In the project: **Settings → Git** — confirm **abdullahali-art/accounts-payment-plan** and **Production Branch = main**.
+2. **Match Git author to GitHub:** In this repo, `git config user.name` / `user.email` should match the GitHub account that owns the repo (see [GitHub noreply emails](https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address)).
+3. **CLI only if you’re on the team:** Add your user to the Vercel team, or in Vercel **Account Settings → Authentication** connect the same GitHub account you use for the repo.
+4. **Manual deploy:** Vercel dashboard → **Deployments** → **⋯** on latest → **Redeploy** (use latest from Git if prompted).
+
 ## Push to GitHub
 
 From this folder:
