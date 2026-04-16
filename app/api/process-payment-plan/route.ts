@@ -43,7 +43,11 @@ async function updateOpportunityFields(params: {
   opportunityId: string;
   contactId: string;
   customFields: GhlCustomField[];
-}) {
+}): Promise<{ status: number; fieldsResolved: number; fieldsUnresolved: number }> {
+  const fieldsResolved = params.customFields.filter((f) => !!f.id).length;
+  const fieldsUnresolved = params.customFields.filter((f) => !f.id).length;
+  console.log(`[GHL write] opp=${params.opportunityId} resolved=${fieldsResolved} unresolved=${fieldsUnresolved}`);
+
   const res = await fetch(
     `https://services.leadconnectorhq.com/opportunities/${params.opportunityId}`,
     {
@@ -55,10 +59,12 @@ async function updateOpportunityFields(params: {
       })
     }
   );
+  const text = await res.text();
+  console.log(`[GHL write] status=${res.status} body=${text.slice(0, 300)}`);
   if (!res.ok) {
-    const text = await res.text();
     throw new Error(`GHL opportunity update failed: ${res.status} ${text}`);
   }
+  return { status: res.status, fieldsResolved, fieldsUnresolved };
 }
 
 /**
@@ -374,7 +380,7 @@ export async function POST(request: Request) {
     // ── 5. Write fields to GHL (single PUT) ──────────────────────────────
     // Stage advance and n8n webhook are handled by the GHL workflow
     // triggered when installment_schedule_json is updated.
-    await updateOpportunityFields({
+    const writeResult = await updateOpportunityFields({
       apiKey: ghlApiKey,
       opportunityId: opp_id,
       contactId: contact_id,
@@ -434,7 +440,9 @@ export async function POST(request: Request) {
         next_due_amount: nextDueAmount,
         installments_remaining: installmentsRemaining,
         email_to: contactEmail,
-        uploaded_pdf_url: uploadedPdfUrl
+        uploaded_pdf_url: uploadedPdfUrl,
+        ghl_fields_resolved: writeResult.fieldsResolved,
+        ghl_fields_unresolved: writeResult.fieldsUnresolved
       }
     });
   } catch (error) {
