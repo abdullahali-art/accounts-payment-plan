@@ -33,10 +33,36 @@ function ghlHeaders(apiKey: string): HeadersInit {
   };
 }
 
+type GhlOpportunity = {
+  id?: string;
+  _id?: string;
+  pipelineId?: string;
+  pipeline_id?: string;
+  pipelineStageId?: string;
+  pipeline_stage_id?: string;
+  name?: string;
+  status?: string;
+  monetaryValue?: number;
+  assignedTo?: string;
+  contactId?: string;
+};
+
+async function getOpportunity(apiKey: string, opportunityId: string): Promise<GhlOpportunity | null> {
+  const res = await fetch(
+    `https://services.leadconnectorhq.com/opportunities/${opportunityId}`,
+    { headers: ghlHeaders(apiKey) }
+  );
+  if (!res.ok) return null;
+  const json = (await res.json()) as Record<string, unknown>;
+  const opp = (json.opportunity ?? json.data ?? json) as GhlOpportunity;
+  return opp && typeof opp === "object" ? opp : null;
+}
+
 /**
- * Write custom fields to a GHL opportunity. Single PUT — no stage change.
- * The GHL workflow (triggered by installment_schedule_json update) handles
- * stage advance and n8n webhook from here.
+ * Write custom fields to a GHL opportunity.
+ * Fetches the opportunity first so we can include all required PUT fields
+ * (name, status, pipelineId, pipelineStageId) — GHL silently ignores custom
+ * field writes if mandatory fields are missing from the PUT body.
  */
 async function updateOpportunityFields(params: {
   apiKey: string;
@@ -48,15 +74,32 @@ async function updateOpportunityFields(params: {
   const fieldsUnresolved = params.customFields.filter((f) => !f.id).length;
   console.log(`[GHL write] opp=${params.opportunityId} resolved=${fieldsResolved} unresolved=${fieldsUnresolved}`);
 
+  // Fetch current opportunity to get required fields for the PUT
+  const opp = await getOpportunity(params.apiKey, params.opportunityId);
+
+  const putBody: Record<string, unknown> = {
+    contactId: opp?.contactId || params.contactId,
+    name: opp?.name ?? "",
+    status: opp?.status ?? "open",
+    monetaryValue: typeof opp?.monetaryValue === "number" ? opp.monetaryValue : 0,
+    customFields: params.customFields
+  };
+  if (opp?.pipelineId ?? opp?.pipeline_id) {
+    putBody.pipelineId = opp?.pipelineId ?? opp?.pipeline_id;
+  }
+  if (opp?.pipelineStageId ?? opp?.pipeline_stage_id) {
+    putBody.pipelineStageId = opp?.pipelineStageId ?? opp?.pipeline_stage_id;
+  }
+  if (opp?.assignedTo) {
+    putBody.assignedTo = opp.assignedTo;
+  }
+
   const res = await fetch(
     `https://services.leadconnectorhq.com/opportunities/${params.opportunityId}`,
     {
       method: "PUT",
       headers: ghlHeaders(params.apiKey),
-      body: JSON.stringify({
-        contactId: params.contactId,
-        customFields: params.customFields
-      })
+      body: JSON.stringify(putBody)
     }
   );
   const text = await res.text();
