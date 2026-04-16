@@ -3,13 +3,22 @@
 import { useEffect, useState } from "react";
 import PaymentPlanBuilder from "@/components/payment-plan-builder";
 
+type OpportunityContext = {
+  opportunityName?: string;
+  clientName?: string;
+  studentEmail?: string;
+  application?: string;
+  programOfferId?: string;
+  xeroCustomerNumber?: string;
+  xeroTrackingCode?: string;
+  error?: string;
+};
+
 export default function HomePage() {
   const [oppId, setOppId] = useState("");
   const [contactId, setContactId] = useState("");
-  const [opportunityName, setOpportunityName] = useState("");
-  const [clientName, setClientName] = useState("");
-  const [application, setApplication] = useState("");
   const [isContextLoading, setIsContextLoading] = useState(false);
+  const [ctx, setCtx] = useState<OpportunityContext>({});
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -18,9 +27,7 @@ export default function HomePage() {
     setOppId(opp);
     setContactId(contact);
 
-    if (!opp || !contact) {
-      return;
-    }
+    if (!opp || !contact) return;
 
     const loadContext = async () => {
       try {
@@ -28,22 +35,13 @@ export default function HomePage() {
         const response = await fetch(
           `/api/opportunity-context?opp_id=${encodeURIComponent(opp)}&contact_id=${encodeURIComponent(contact)}`
         );
-        const data = (await response.json()) as {
-          opportunityName?: string;
-          clientName?: string;
-          application?: string;
-          error?: string;
-        };
+        const data = (await response.json()) as OpportunityContext;
         if (!response.ok) {
           throw new Error(data.error || "Unable to load opportunity context.");
         }
-        setOpportunityName(data.opportunityName || "");
-        setClientName(data.clientName || "");
-        setApplication(data.application || "");
+        setCtx(data);
       } catch {
-        setOpportunityName("");
-        setClientName("");
-        setApplication("");
+        setCtx({});
       } finally {
         setIsContextLoading(false);
       }
@@ -57,10 +55,14 @@ export default function HomePage() {
       <PaymentPlanBuilder
         oppId={oppId}
         contactId={contactId}
-        opportunityName={opportunityName}
-        clientName={clientName}
-        application={application}
         isContextLoading={isContextLoading}
+        opportunityName={ctx.opportunityName || ""}
+        clientName={ctx.clientName || ""}
+        studentEmail={ctx.studentEmail || ""}
+        application={ctx.application || ""}
+        programOfferId={ctx.programOfferId || ""}
+        xeroCustomerNumber={ctx.xeroCustomerNumber || ""}
+        xeroTrackingCode={ctx.xeroTrackingCode || ""}
       />
     </main>
   );
