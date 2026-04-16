@@ -59,6 +59,46 @@ async function getOpportunity(apiKey: string, opportunityId: string): Promise<Gh
 }
 
 /**
+ * Find the Accounts pipeline opportunity for a contact.
+ * The opp_id in the URL may point to the L2C Education opportunity —
+ * we need the corresponding Accounts opportunity to write fields to.
+ */
+async function findAccountsOpportunity(params: {
+  apiKey: string;
+  locationId: string;
+  contactId: string;
+}): Promise<GhlOpportunity | null> {
+  const headers = ghlHeaders(params.apiKey);
+
+  // 1. Get all pipelines and find "Accounts"
+  const pipelinesRes = await fetch(
+    `https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${encodeURIComponent(params.locationId)}`,
+    { headers }
+  );
+  if (!pipelinesRes.ok) return null;
+  const pipelinesData = (await pipelinesRes.json()) as { pipelines?: GhlOpportunity[] };
+  const pipelines = (pipelinesData.pipelines ?? []) as Array<Record<string, unknown>>;
+  const accountsPipeline = pipelines.find(
+    (p) => String(p.name ?? p.pipelineName ?? "").trim().toLowerCase() === "accounts"
+  );
+  if (!accountsPipeline) return null;
+  const pipelineId = String(accountsPipeline.id ?? accountsPipeline._id ?? "");
+  if (!pipelineId) return null;
+
+  // 2. Search for opportunities in Accounts pipeline for this contact
+  const searchRes = await fetch(
+    `https://services.leadconnectorhq.com/opportunities/search?location_id=${encodeURIComponent(params.locationId)}&contactId=${encodeURIComponent(params.contactId)}&pipelineId=${encodeURIComponent(pipelineId)}`,
+    { headers }
+  );
+  if (!searchRes.ok) return null;
+  const searchData = (await searchRes.json()) as { opportunities?: GhlOpportunity[] };
+  const opps = searchData.opportunities ?? [];
+
+  // Return the first (most recently created) Accounts opportunity for this contact
+  return opps[0] ?? null;
+}
+
+/**
  * Write custom fields to a GHL opportunity.
  * Fetches the opportunity first so we can include all required PUT fields
  * (name, status, pipelineId, pipelineStageId) — GHL silently ignores custom
@@ -335,8 +375,20 @@ export async function POST(request: Request) {
     if (!ghlApiKey) throw new Error("Missing GHL_API_KEY in environment variables.");
     if (!ghlLocationId) throw new Error("Missing GHL_LOCATION_ID in environment variables.");
 
-    // ── 1. Resolve GHL field GUIDs ────────────────────────────────────────
-    const fieldSchemaMap = await fetchFieldSchemaMap({ apiKey: ghlApiKey, locationId: ghlLocationId });
+    // ── 1. Resolve field GUIDs + find the Accounts opportunity ───────────
+    // opp_id from the URL may belong to the L2C Education pipeline.
+    // We need the Accounts pipeline opportunity for this contact to write fields to.
+    const [fieldSchemaMap, accountsOpp] = await Promise.all([
+      fetchFieldSchemaMap({ apiKey: ghlApiKey, locationId: ghlLocationId }),
+      findAccountsOpportunity({ apiKey: ghlApiKey, locationId: ghlLocationId, contactId: contact_id })
+    ]);
+
+    const accountsOppId = String(accountsOpp?.id ?? accountsOpp?._id ?? "");
+    if (!accountsOppId) {
+      throw new Error("No Accounts pipeline opportunity found for this contact. Ensure the GHL workflow has created one.");
+    }
+    console.log(`[route] source opp=${opp_id} → accounts opp=${accountsOppId}`);
+
     const keyToId = new Map<string, string>();
     for (const [id, key] of fieldSchemaMap) {
       keyToId.set(normalise(key), id);
@@ -361,6 +413,8 @@ export async function POST(request: Request) {
       nextDueAmount,
       installmentsRemaining
     } = buildJsonBlob(body, xeroTrackingCode);
+    // Stamp the blob with the Accounts opp ID, not the source opp ID
+    blob.opportunity_id = accountsOppId;
 
     // ── 3. Build human-readable schedule ─────────────────────────────────
     const scheduleLines: string[] = [];
@@ -382,9 +436,10 @@ export async function POST(request: Request) {
     ].join("\n");
 
     // ── 4. Build custom fields payload ────────────────────────────────────
+    // Use accountsOppId in the app link so the link re-opens the Accounts opp
     const appBaseUrl = getEnv("APP_BASE_URL");
     const paymentPlanAppLink = appBaseUrl
-      ? `${appBaseUrl}/?opp_id=${opp_id}&contact_id=${contact_id}`
+      ? `${appBaseUrl}/?opp_id=${accountsOppId}&contact_id=${contact_id}`
       : "";
 
     const customFields: GhlCustomField[] = [
@@ -420,12 +475,12 @@ export async function POST(request: Request) {
       customFields.push(cf("opportunity.generate_pay_plan", paymentPlanAppLink));
     }
 
-    // ── 5. Write fields to GHL (single PUT) ──────────────────────────────
+    // ── 5. Write fields to the Accounts opportunity (single PUT) ─────────
     // Stage advance and n8n webhook are handled by the GHL workflow
     // triggered when installment_schedule_json is updated.
     const writeResult = await updateOpportunityFields({
       apiKey: ghlApiKey,
-      opportunityId: opp_id,
+      opportunityId: accountsOppId,
       contactId: contact_id,
       customFields
     });
