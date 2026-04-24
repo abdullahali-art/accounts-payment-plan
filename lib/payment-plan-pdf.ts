@@ -70,28 +70,44 @@ export function createPlanSummaryString(installments: InstallmentPayload[]): str
     .join(" | ");
 }
 
-function aggregateFeeRows(installments: InstallmentPayload[]) {
-  const map = new Map<string, { terms: number; total: number }>();
-  for (const item of installments) {
-    const feeTypes = item.fees?.length ? item.fees.map((f) => f.feeType) : [item.feeType];
-    for (const feeType of feeTypes) {
-      const current = map.get(feeType) || { terms: 0, total: 0 };
-      current.terms += 1;
-      current.total += item.netFee;
-      map.set(feeType, current);
-    }
-  }
-  return Array.from(map.entries()).map(([feeType, val]) => [
-    feeType,
-    `$${currency.format(val.total / Math.max(val.terms, 1))}`,
-    String(val.terms),
-    `$${currency.format(val.total)}`,
-    "Payable"
-  ]);
+const PAGE_W = 210;
+const PAGE_H = 297;
+const M = 14; // margin
+const HEADER_H = 42; // height consumed by the repeated page header
+const FOOTER_Y = PAGE_H - 10; // baseline of footer text
+
+function drawHeader(doc: jsPDF) {
+  // Company info — left
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(30, 30, 30);
+  doc.text("The Migration", M, 14);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(70, 70, 70);
+  doc.text("office 2, 16 Kendall street, Harris Park, NSW, 2150, Australia", M, 20);
+  doc.text("449550100", M, 26);
+  doc.text("info@themigration.com.au", M, 32);
+
+  // "PAYMENT SCHEDULE" — right, large blue
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(27);
+  doc.setTextColor(30, 105, 180);
+  doc.text("PAYMENT", PAGE_W - M, 20, { align: "right" });
+  doc.text("SCHEDULE", PAGE_W - M, 33, { align: "right" });
+
+  // Divider
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.4);
+  doc.line(M, HEADER_H, PAGE_W - M, HEADER_H);
 }
 
-function collectedByLabel(value: "us" | "university" | undefined): string {
-  return value === "university" ? "University" : "The Migration";
+function drawFooter(doc: jsPDF, page: number, total: number) {
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(100, 100, 100);
+  doc.text(`Page ${page} of ${total}`, PAGE_W - M, FOOTER_Y, { align: "right" });
 }
 
 export function generatePdfBuffer(
@@ -99,103 +115,162 @@ export function generatePdfBuffer(
   context?: PaymentPlanPdfContext
 ): Buffer {
   const doc = new jsPDF();
-  const generatedDate =
-    context?.generatedDate ||
-    new Date().toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric"
-    });
 
-  // Header bar
-  doc.setFillColor(5, 55, 97);
-  doc.rect(0, 0, 210, 36, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18);
-  doc.text("Aussie Migration and Education", 14, 13);
+  // ── Page 1 header ─────────────────────────────────────────────────────
+  drawHeader(doc);
+
+  // ── Client / Application section ──────────────────────────────────────
+  const colMid = PAGE_W / 2 + 4;
+  let y = HEADER_H + 10;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(140, 140, 140);
+  doc.text("Client Details", M, y);
+  doc.text("Application Details", colMid, y);
+
+  y += 7;
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.text("ABN / Office 2, 16 Kendall Street, Harris Park NSW 2150", 14, 22);
-  doc.text("support@themigration.com.au  |  +61 489 278 100", 14, 29);
+  doc.setTextColor(30, 30, 30);
+  doc.text(context?.studentName || "-", M, y);
 
-  // Title
-  doc.setTextColor(10, 38, 66);
-  doc.setFontSize(16);
-  doc.text("Payment Plan", 14, 48);
-  doc.setFontSize(10);
-  doc.setTextColor(110, 110, 110);
-  doc.text(`Generated: ${generatedDate}`, 162, 48);
+  // Application name may be long — wrap it
+  const appText = context?.application || "-";
+  const appLines = doc.splitTextToSize(appText, PAGE_W - colMid - M);
+  doc.text(appLines, colMid, y);
 
-  // Student info block
-  doc.setFillColor(240, 243, 247);
-  doc.roundedRect(14, 54, 182, 30, 2, 2, "F");
-  doc.setTextColor(90, 90, 90);
+  y += 7;
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.text("Student Name", 17, 63);
-  doc.text("Student Email", 109, 63);
-  doc.text("Application / Program Offer", 17, 76);
+  doc.setTextColor(70, 70, 70);
+  doc.text(context?.studentEmail || "-", M, y);
 
-  doc.setTextColor(35, 35, 35);
+  const sectionBottom = Math.max(y, HEADER_H + 10 + 7 + (appLines.length - 1) * 5) + 10;
+
+  // Second divider
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.4);
+  doc.line(M, sectionBottom, PAGE_W - M, sectionBottom);
+
+  // ── "Installment Details" heading ─────────────────────────────────────
+  y = sectionBottom + 8;
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.text(context?.studentName || payload.contact_id, 17, 69);
-  doc.text(context?.studentEmail || "-", 109, 69);
-  doc.text(context?.application || "-", 17, 82);
+  doc.setTextColor(30, 30, 30);
+  doc.text("Installment Details", M, y);
 
-  // Fee breakdown
-  doc.setTextColor(10, 38, 66);
-  doc.setFontSize(12);
-  doc.text("Fee Breakdown", 14, 96);
+  const tableStartY = y + 4;
+
+  // ── Build table rows ──────────────────────────────────────────────────
+  type Cell = string | { content: string; rowSpan?: number; styles?: Record<string, unknown> };
+  const tableBody: Cell[][] = [];
+
+  // Deposit row (if present)
+  if (payload.deposit) {
+    const d = payload.deposit;
+    tableBody.push([
+      { content: `Deposit\n${formatReadableDate(d.due)}`, styles: { valign: "middle", fontStyle: "normal" } },
+      "Deposit",
+      currency.format(d.amount),
+      { content: `AUD ${currency.format(d.amount)}`, styles: { halign: "right", valign: "middle", fontStyle: "normal" } }
+    ]);
+  }
+
+  // Installment rows
+  for (const inst of payload.installments) {
+    const feeLines: Array<[string, string]> = [];
+
+    if (inst.fees && inst.fees.length > 0) {
+      for (const fee of inst.fees) {
+        feeLines.push([fee.feeType, currency.format(fee.feeAmount)]);
+      }
+    } else {
+      feeLines.push([inst.feeType || "Tuition Fee", currency.format(inst.feeAmount)]);
+    }
+
+    if (inst.discount > 0) {
+      feeLines.push(["Discount", `(${currency.format(inst.discount)})`]);
+    }
+
+    const rowCount = feeLines.length;
+    const detailLabel = `${inst.installmentName}\n${formatReadableDate(inst.installmentDate)}`;
+    const totalLabel = `AUD ${currency.format(inst.netFee)}`;
+
+    // First row of the group: DETAILS and TOTAL span all fee rows
+    tableBody.push([
+      { content: detailLabel, rowSpan: rowCount, styles: { valign: "middle", fontStyle: "normal" } },
+      feeLines[0][0],
+      feeLines[0][1],
+      { content: totalLabel, rowSpan: rowCount, styles: { halign: "right", valign: "middle", fontStyle: "normal" } }
+    ]);
+
+    // Continuation rows (no DETAILS or TOTAL cell)
+    for (let i = 1; i < feeLines.length; i++) {
+      tableBody.push([feeLines[i][0], feeLines[i][1]]);
+    }
+  }
+
+  // Grand total
+  const grandTotal =
+    payload.installments.reduce((s, i) => s + i.netFee, 0) +
+    (payload.deposit?.amount ?? 0);
 
   autoTable(doc, {
-    startY: 99,
-    head: [["Fee Type", "Amount ($)", "Terms", "Total ($)", "Type"]],
-    body: aggregateFeeRows(payload.installments),
-    theme: "grid",
-    headStyles: { fillColor: [7, 61, 108], textColor: [255, 255, 255] },
-    styles: { fontSize: 9 }
-  });
-
-  const finalY =
-    (doc as jsPDF & { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY || 128;
-  const totalNet = payload.installments.reduce((sum, item) => sum + item.netFee, 0);
-  doc.setFillColor(7, 61, 108);
-  doc.roundedRect(14, finalY + 6, 182, 12, 2, 2, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(11);
-  doc.text(`Net Total: $${currency.format(totalNet)}`, 150, finalY + 14);
-
-  // Payment schedule
-  doc.setTextColor(10, 38, 66);
-  doc.setFontSize(12);
-  doc.text("Payment Schedule", 14, finalY + 28);
-
-  const depositRows: string[][] = payload.deposit
-    ? [
-        [
-          "D",
-          "Deposit",
-          formatReadableDate(payload.deposit.due),
-          `$${currency.format(payload.deposit.amount)}`,
-          collectedByLabel(payload.deposit.collected_by)
-        ]
+    startY: tableStartY,
+    head: [["DETAILS", "FEE TYPE", "AMT (AUD)", "TOTAL"]],
+    body: tableBody as Parameters<typeof autoTable>[1]["body"],
+    foot: [
+      [
+        { content: "Grand Total", colSpan: 3, styles: { fontStyle: "bold" } },
+        { content: `AUD ${currency.format(grandTotal)}`, styles: { halign: "right", fontStyle: "bold" } }
       ]
-    : [];
-
-  const installmentRows = payload.installments.map((item, index) => [
-    String(index + 1),
-    item.installmentName,
-    formatReadableDate(item.installmentDate),
-    `$${currency.format(item.netFee)}`,
-    collectedByLabel(item.collected_by)
-  ]);
-
-  autoTable(doc, {
-    startY: finalY + 31,
-    head: [["#", "Name", "Due Date", "Amount ($)", "Collected By"]],
-    body: [...depositRows, ...installmentRows],
-    theme: "grid",
-    headStyles: { fillColor: [24, 124, 227], textColor: [255, 255, 255] },
-    styles: { fontSize: 10 }
+    ],
+    theme: "plain",
+    headStyles: {
+      fillColor: [240, 240, 240],
+      textColor: [40, 40, 40],
+      fontStyle: "bold",
+      fontSize: 9,
+      lineWidth: 0.3,
+      lineColor: [210, 210, 210]
+    },
+    footStyles: {
+      fillColor: [240, 240, 240],
+      textColor: [30, 30, 30],
+      fontSize: 9,
+      lineWidth: 0.3,
+      lineColor: [210, 210, 210]
+    },
+    styles: {
+      fontSize: 9,
+      cellPadding: { top: 4, right: 5, bottom: 4, left: 5 },
+      lineColor: [210, 210, 210],
+      lineWidth: 0.3,
+      textColor: [50, 50, 50]
+    },
+    columnStyles: {
+      0: { cellWidth: 38 },
+      1: { cellWidth: "auto" },
+      2: { halign: "right", cellWidth: 32 },
+      3: { halign: "right", cellWidth: 36 }
+    },
+    margin: { top: HEADER_H + 4, left: M, right: M, bottom: 18 },
+    showFoot: "lastPage",
+    // Repeat header on continuation pages
+    didDrawPage: (data) => {
+      if (data.pageNumber > 1) {
+        drawHeader(doc);
+      }
+    }
   });
+
+  // ── Add page footers now that total page count is known ───────────────
+  const totalPages = (doc as jsPDF & { internal: { getNumberOfPages(): number } }).internal.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    drawFooter(doc, i, totalPages);
+  }
 
   return Buffer.from(doc.output("arraybuffer"));
 }
