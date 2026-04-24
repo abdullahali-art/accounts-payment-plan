@@ -1,5 +1,16 @@
+import fs from "fs";
+import path from "path";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+
+// Loaded once at module init — gracefully absent if file missing
+let LOGO_BASE64: string | null = null;
+try {
+  const buf = fs.readFileSync(path.join(process.cwd(), "public", "Migration.png"));
+  LOGO_BASE64 = buf.toString("base64");
+} catch {
+  // logo not available — header renders text-only
+}
 
 export type DepositPayload = {
   amount: number;
@@ -77,18 +88,25 @@ const HEADER_H = 42; // height consumed by the repeated page header
 const FOOTER_Y = PAGE_H - 10; // baseline of footer text
 
 function drawHeader(doc: jsPDF) {
-  // Company info — left
+  // Logo — top left
+  const logoSize = 14;
+  const textX = LOGO_BASE64 ? M + logoSize + 3 : M;
+  if (LOGO_BASE64) {
+    doc.addImage(`data:image/png;base64,${LOGO_BASE64}`, "PNG", M, 8, logoSize, logoSize);
+  }
+
+  // Company info — right of logo
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(30, 30, 30);
-  doc.text("The Migration", M, 14);
+  doc.text("The Migration", textX, 14);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   doc.setTextColor(70, 70, 70);
-  doc.text("office 2, 16 Kendall street, Harris Park, NSW, 2150, Australia", M, 20);
-  doc.text("449550100", M, 26);
-  doc.text("info@themigration.com.au", M, 32);
+  doc.text("office 2, 16 Kendall street, Harris Park, NSW, 2150, Australia", textX, 20);
+  doc.text("449550100", textX, 26);
+  doc.text("info@themigration.com.au", textX, 32);
 
   // "PAYMENT SCHEDULE" — right, large blue
   doc.setFont("helvetica", "bold");
