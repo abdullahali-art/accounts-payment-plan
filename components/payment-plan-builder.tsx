@@ -179,6 +179,8 @@ export default function PaymentPlanBuilder({
   const [isSubmitting, setSubmitting] = useState(false);
   const [isSaving, setSaving] = useState(false);
   const [isDownloading, setDownloading] = useState(false);
+  const [isDiscontinuing, setDiscontinuing] = useState(false);
+  const [discontinued, setDiscontinued] = useState(false);
   const [responseMessage, setResponseMessage] = useState("");
 
   // ---------------------------------------------------------------------------
@@ -410,6 +412,33 @@ export default function PaymentPlanBuilder({
   };
 
   // ---------------------------------------------------------------------------
+  // Discontinue opportunity
+  // ---------------------------------------------------------------------------
+
+  const discontinueOpportunity = async () => {
+    if (!oppId) { setResponseMessage("Missing opp_id."); return; }
+    if (!window.confirm("Move this opportunity to Discontinued? This cannot be undone from here.")) return;
+
+    try {
+      setDiscontinuing(true);
+      setResponseMessage("");
+      const res = await fetch("/api/discontinue-opportunity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opp_id: oppId })
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "Failed to discontinue.");
+      setDiscontinued(true);
+      setResponseMessage("Opportunity moved to Discontinued.");
+    } catch (error) {
+      setResponseMessage(error instanceof Error ? error.message : "Failed.");
+    } finally {
+      setDiscontinuing(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
   // Download PDF
   // ---------------------------------------------------------------------------
 
@@ -472,16 +501,26 @@ export default function PaymentPlanBuilder({
 
       {/* ── Header card ────────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm md:p-7">
-        <div className="mb-5 border-b border-slate-200 pb-5">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-800">
-            Payment Schedule
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Opportunity:{" "}
-            <span className="font-medium">
-              {loading ? "Loading…" : opportunityName || oppId || "-"}
-            </span>
-          </p>
+        <div className="mb-5 flex items-start justify-between border-b border-slate-200 pb-5">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-800">
+              Payment Schedule
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Opportunity:{" "}
+              <span className="font-medium">
+                {loading ? "Loading…" : opportunityName || oppId || "-"}
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={discontinueOpportunity}
+            disabled={isDiscontinuing || discontinued}
+            className="inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isDiscontinuing ? "Processing…" : discontinued ? "Discontinued" : "Mark as Discontinued"}
+          </button>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
