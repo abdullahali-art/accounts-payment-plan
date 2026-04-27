@@ -209,6 +209,7 @@ function buildJsonBlob(body: PaymentPlanBody, xeroTrackingCode: string) {
     installments
   } = body;
 
+
   // Plan-level financials
   const grossFeeFromInstallments = installments.reduce((s, i) => s + i.feeAmount, 0);
   const depositAmount = deposit?.amount ?? 0;
@@ -296,7 +297,25 @@ function buildJsonBlob(body: PaymentPlanBody, xeroTrackingCode: string) {
     amendment_log: [],
     created_at: now,
     updated_at: now,
-    original_schedule_hash: ""
+    original_schedule_hash: "",
+    // Full form state — used to restore the UI when reopening the link
+    form_data: {
+      commission_pct,
+      deposit: deposit
+        ? { amount: deposit.amount, due: deposit.due, collected_by: deposit.collected_by }
+        : null,
+      installments: installments.map((inst) => ({
+        installmentName: inst.installmentName,
+        installmentDate: inst.installmentDate,
+        feeType: inst.feeType || "",
+        feeAmount: inst.feeAmount,
+        discount: inst.discount,
+        discountPercentage: inst.discountPercentage ?? 0,
+        netFee: inst.netFee,
+        collected_by: inst.collected_by ?? "us",
+        fees: (inst.fees ?? []).map((f) => ({ feeType: f.feeType, feeAmount: f.feeAmount }))
+      }))
+    }
   };
 
   return {
@@ -416,9 +435,6 @@ export async function POST(request: Request) {
     if (deposit && depositAmount > 0) {
       customFields.push(cf("opportunity.deposit_amount",   depositAmount.toFixed(2)));
       customFields.push(cf("opportunity.deposit_due_date", deposit.due));
-    }
-    if (body.program_offer_id) {
-      customFields.push(cf("opportunity.program_offer_id", body.program_offer_id));
     }
     if (paymentPlanAppLink) {
       customFields.push(cf("opportunity.generate_pay_plan", paymentPlanAppLink));

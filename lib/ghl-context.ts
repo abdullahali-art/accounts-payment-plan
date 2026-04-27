@@ -260,6 +260,22 @@ async function findProgramOfferByRelation(params: {
 // Full GHL context — used by the opportunity-context route
 // ---------------------------------------------------------------------------
 
+export type SavedFormData = {
+  commission_pct: number;
+  deposit: { amount: number; due: string; collected_by: "us" | "university" } | null;
+  installments: Array<{
+    installmentName: string;
+    installmentDate: string;
+    feeType: string;
+    feeAmount: number;
+    discount: number;
+    discountPercentage: number;
+    netFee: number;
+    collected_by: "us" | "university";
+    fees: Array<{ feeType: string; feeAmount: number }>;
+  }>;
+};
+
 export type GhlFullContext = {
   opportunityName: string;
   clientName: string;
@@ -269,13 +285,9 @@ export type GhlFullContext = {
   /** GHL record ID of the Program Offer custom object */
   programOfferId: string;
   xeroCustomerNumber: string;
-  /**
-   * Xero tracking code — sourced in priority order:
-   *   1. opportunity.xero_tracking_code (if already set from a prior submission)
-   *   2. Program Offer record's xero_tracking_code property (set by Automation 6)
-   *   3. Computed fallback: {xeroCustomerNumber}_{programOfferId}
-   */
   xeroTrackingCode: string;
+  /** Restored form state from a previously saved payment plan (null if no plan saved yet) */
+  savedFormData: SavedFormData | null;
 };
 
 export async function getFullGhlContext(params: {
@@ -300,7 +312,8 @@ export async function getFullGhlContext(params: {
     application: "",
     programOfferId: "",
     xeroCustomerNumber: "",
-    xeroTrackingCode: ""
+    xeroTrackingCode: "",
+    savedFormData: null
   };
 
   let opportunity: AnyRecord = {};
@@ -329,21 +342,27 @@ export async function getFullGhlContext(params: {
   // Opportunity customFields may be null before any values are written; enrich just in case.
   const oppCf = enrichCustomFields(opportunity.customFields, fieldSchemaMap);
 
+  // Restore previously saved form state if a plan has been submitted before
+  const savedBlobRaw = getCustomFieldValue(oppCf, "installment_schedule_json");
+  if (savedBlobRaw) {
+    try {
+      const parsed = JSON.parse(savedBlobRaw) as Record<string, unknown>;
+      if (parsed?.form_data && typeof parsed.form_data === "object") {
+        result.savedFormData = parsed.form_data as SavedFormData;
+      }
+    } catch { /* blob not valid JSON — ignore */ }
+  }
+
   // Xero Contact ID: on the opportunity (xero_contact_id) or the contact as fallback
   result.xeroCustomerNumber =
     getCustomFieldValue(oppCf, "xero_contact_id", "xerocontactid", "xero_contact") ||
     getCustomFieldValue(enrichedContactCf, "xero_contact_id", "xerocontactid", "xero_contact", "xero_customer_number", "xerocustomernumber");
 
-  // Internal record ID for direct-fetch optimisation (may be UUID from a prior load)
+  // Internal record ID stored in the Program Offer ID field (GHL UUID)
   const programOfferRecordId = getCustomFieldValue(oppCf, "program_offer_id");
 
   // Priority 1: xero_tracking_code already written to opportunity (prior submit)
   result.xeroTrackingCode = getCustomFieldValue(oppCf, "xero_tracking_code");
-
-  // Try to get application name directly from opportunity custom fields
-  if (!result.application) {
-    result.application = getCustomFieldValue(oppCf, "programoffer", "program_offer");
-  }
 
   // ── 3. Discover custom object schema keys (one shared call) ───────────
   const schemaKeys = await discoverCustomObjectSchemaKeys({
@@ -377,23 +396,6 @@ export async function getFullGhlContext(params: {
       if (!result.xeroTrackingCode && result.xeroCustomerNumber && programOfferCode) {
         result.xeroTrackingCode = `${result.xeroCustomerNumber}-${programOfferCode}`;
       }
-    }
-  }
-
-  // ── 5. Relation search fallback (runs when direct fetch found nothing) ─
-  if (!programOfferResolved) {
-    const found = await findProgramOfferByRelation({
-      apiKey: params.apiKey,
-      locationId,
-      opportunityId: params.oppId,
-      schemaKeys
-    });
-
-    if (!result.application) result.application = found.name;
-    // programOfferId = short code (e.g. TRIN-DBCM)
-    result.programOfferId = found.programOfferCode;
-    if (!result.xeroTrackingCode && result.xeroCustomerNumber && found.programOfferCode) {
-      result.xeroTrackingCode = `${result.xeroCustomerNumber}-${found.programOfferCode}`;
     }
   }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import PaymentPlanBuilder from "@/components/payment-plan-builder";
+import type { SavedFormData } from "@/lib/ghl-context";
 
 type OpportunityContext = {
   opportunityName?: string;
@@ -11,6 +12,7 @@ type OpportunityContext = {
   programOfferId?: string;
   xeroCustomerNumber?: string;
   xeroTrackingCode?: string;
+  savedFormData?: SavedFormData | null;
   error?: string;
 };
 
@@ -63,6 +65,7 @@ export default function HomePage() {
         programOfferId={ctx.programOfferId || ""}
         xeroCustomerNumber={ctx.xeroCustomerNumber || ""}
         xeroTrackingCode={ctx.xeroTrackingCode || ""}
+        savedFormData={ctx.savedFormData ?? null}
       />
     </main>
   );

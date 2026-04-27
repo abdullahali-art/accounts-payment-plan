@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { SavedFormData } from "@/lib/ghl-context";
 import { Plus, Send, Trash2, X } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,7 @@ type Props = {
   programOfferId: string;
   xeroCustomerNumber: string;
   xeroTrackingCode: string;
+  savedFormData: SavedFormData | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -127,7 +129,8 @@ export default function PaymentPlanBuilder({
   application,
   programOfferId,
   xeroCustomerNumber,
-  xeroTrackingCode
+  xeroTrackingCode,
+  savedFormData
 }: Props) {
   // --- Installments ---
   const [isModalOpen, setModalOpen] = useState(false);
@@ -142,6 +145,34 @@ export default function PaymentPlanBuilder({
 
   // --- Commission ---
   const [commissionPct, setCommissionPct] = useState(0);
+
+  // Hydrate form from a previously saved plan (fires once when context loads)
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (!savedFormData || hydrated.current) return;
+    hydrated.current = true;
+    setCommissionPct(savedFormData.commission_pct ?? 0);
+    if (savedFormData.deposit) {
+      setHasDeposit(true);
+      setDepositAmount(savedFormData.deposit.amount);
+      setDepositDue(savedFormData.deposit.due);
+      setDepositCollectedBy(savedFormData.deposit.collected_by);
+    }
+    setInstallments(
+      savedFormData.installments.map((inst) => ({
+        id: crypto.randomUUID(),
+        installmentName: inst.installmentName,
+        installmentDate: inst.installmentDate,
+        feeType: inst.feeType || (inst.fees.length === 1 ? inst.fees[0].feeType : `${inst.fees.length} Fees`),
+        feeAmount: inst.feeAmount,
+        discount: inst.discount,
+        discountPercentage: inst.discountPercentage,
+        netFee: inst.netFee,
+        collected_by: inst.collected_by,
+        fees: inst.fees.map((f) => ({ id: crypto.randomUUID(), feeType: f.feeType, feeAmount: f.feeAmount }))
+      }))
+    );
+  }, [savedFormData]);
 
   // --- UI state ---
   const [isSubmitting, setSubmitting] = useState(false);
@@ -391,12 +422,7 @@ export default function PaymentPlanBuilder({
           <CtxField
             label="Application / Program Offer"
             value={loading ? "Loading…" : application || "-"}
-            className="sm:col-span-2"
-          />
-          <CtxField
-            label="Program Offer ID"
-            value={loading ? "Loading…" : programOfferId || "-"}
-            className="sm:col-span-2"
+            className="sm:col-span-4"
           />
         </div>
       </div>

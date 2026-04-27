@@ -37,7 +37,8 @@ export async function GET(request: NextRequest) {
       application: ctx.application,
       programOfferId: ctx.programOfferId,
       xeroCustomerNumber: ctx.xeroCustomerNumber,
-      xeroTrackingCode: ctx.xeroTrackingCode
+      xeroTrackingCode: ctx.xeroTrackingCode,
+      savedFormData: ctx.savedFormData ?? null
     });
   } catch (error) {
     return NextResponse.json(
