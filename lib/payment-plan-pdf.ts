@@ -283,6 +283,26 @@ export function generatePdfBuffer(
     }
   });
 
+  // ── Reference note (last page, below table) ───────────────────────────
+  const xeroTrackingCode = payload.xero_tracking_code;
+  if (xeroTrackingCode) {
+    const lastAutoTable = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable;
+    const lastY = lastAutoTable?.finalY ?? tableStartY + 60;
+    const noteY = Math.min(lastY + 8, PAGE_H - 36); // keep above footer
+    const lastPage = (doc as jsPDF & { internal: { getNumberOfPages(): number } }).internal.getNumberOfPages();
+    doc.setPage(lastPage);
+    doc.setFillColor(240, 247, 255);
+    doc.rect(M, noteY, PAGE_W - M * 2, 20, "F");
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(70, 70, 70);
+    doc.text("Please use the following reference code when making your payment:", M + 4, noteY + 7);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(30, 105, 180);
+    doc.text(xeroTrackingCode, M + 4, noteY + 15);
+  }
+
   // ── Add page footers now that total page count is known ───────────────
   const totalPages = (doc as jsPDF & { internal: { getNumberOfPages(): number } }).internal.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {

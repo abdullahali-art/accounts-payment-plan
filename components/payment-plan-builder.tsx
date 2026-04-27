@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { SavedFormData } from "@/lib/ghl-context";
-import { Plus, Send, Trash2, X } from "lucide-react";
+import { Pencil, Plus, Save, Send, Trash2, X } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -175,7 +175,9 @@ export default function PaymentPlanBuilder({
   }, [savedFormData]);
 
   // --- UI state ---
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [isSaving, setSaving] = useState(false);
   const [isDownloading, setDownloading] = useState(false);
   const [responseMessage, setResponseMessage] = useState("");
 
@@ -251,6 +253,20 @@ export default function PaymentPlanBuilder({
   // Add / remove installments
   // ---------------------------------------------------------------------------
 
+  const editInstallment = (id: string) => {
+    const inst = installments.find((i) => i.id === id);
+    if (!inst) return;
+    setDraft({
+      installmentName: inst.installmentName,
+      installmentDate: inst.installmentDate,
+      fees: inst.fees.length > 0 ? inst.fees : [createEmptyFeeLine()],
+      overallDiscountPercentage: inst.discountPercentage,
+      collected_by: inst.collected_by
+    });
+    setEditingId(id);
+    setModalOpen(true);
+  };
+
   const addInstallment = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -263,8 +279,8 @@ export default function PaymentPlanBuilder({
       return;
     }
 
-    const row: Installment = {
-      id: crypto.randomUUID(),
+    const updated: Installment = {
+      id: editingId ?? crypto.randomUUID(),
       installmentName: draft.installmentName.trim(),
       installmentDate: draft.installmentDate,
       feeType: draft.fees.length === 1 ? draft.fees[0].feeType : `${draft.fees.length} Fees`,
@@ -276,8 +292,14 @@ export default function PaymentPlanBuilder({
       fees: draft.fees
     };
 
-    setInstallments((prev) => [...prev, row]);
+    if (editingId) {
+      setInstallments((prev) => prev.map((i) => (i.id === editingId ? updated : i)));
+    } else {
+      setInstallments((prev) => [...prev, updated]);
+    }
+
     setDraft(createEmptyDraft());
+    setEditingId(null);
     setResponseMessage("");
     setModalOpen(false);
   };
@@ -341,6 +363,53 @@ export default function PaymentPlanBuilder({
   };
 
   // ---------------------------------------------------------------------------
+  // Save to GHL (no PDF, no email)
+  // ---------------------------------------------------------------------------
+
+  const saveToGhl = async () => {
+    if (!oppId || !contactId) {
+      setResponseMessage("Missing opp_id or contact_id in URL parameters.");
+      return;
+    }
+    if (installments.length === 0) {
+      setResponseMessage("Please add at least one installment.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setResponseMessage("");
+
+      const response = await fetch("/api/process-payment-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          opp_id: oppId,
+          contact_id: contactId,
+          xero_customer_number: xeroCustomerNumber,
+          program_offer_id: programOfferId,
+          xero_tracking_code: xeroTrackingCode,
+          commission_pct: commissionPct,
+          deposit:
+            hasDeposit && depositAmount > 0
+              ? { amount: depositAmount, due: depositDue, collected_by: depositCollectedBy }
+              : null,
+          installments,
+          send_email: false
+        })
+      });
+
+      const data = (await response.json()) as { message?: string; error?: string };
+      if (!response.ok) throw new Error(data.error || "Failed to save.");
+      setResponseMessage("Saved to GHL successfully.");
+    } catch (error) {
+      setResponseMessage(error instanceof Error ? error.message : "Save failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
   // Download PDF
   // ---------------------------------------------------------------------------
 
@@ -363,6 +432,7 @@ export default function PaymentPlanBuilder({
         body: JSON.stringify({
           opp_id: oppId,
           contact_id: contactId,
+          xero_tracking_code: xeroTrackingCode,
           deposit:
             hasDeposit && depositAmount > 0
               ? { amount: depositAmount, due: depositDue, collected_by: depositCollectedBy }
@@ -521,7 +591,7 @@ export default function PaymentPlanBuilder({
           <h2 className="text-base font-semibold text-slate-800">Installments</h2>
           <button
             type="button"
-            onClick={() => { setDraft(createEmptyDraft()); setModalOpen(true); }}
+            onClick={() => { setDraft(createEmptyDraft()); setEditingId(null); setModalOpen(true); }}
             className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600"
           >
             <Plus size={16} />
@@ -575,14 +645,24 @@ export default function PaymentPlanBuilder({
                       <CollectedByBadge value={item.collected_by} />
                     </td>
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => removeInstallment(item.id)}
-                        className="inline-flex items-center rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-red-500"
-                        aria-label="Delete row"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => editInstallment(item.id)}
+                          className="inline-flex items-center rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-sky-600"
+                          aria-label="Edit row"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeInstallment(item.id)}
+                          className="inline-flex items-center rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-red-500"
+                          aria-label="Delete row"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -601,8 +681,17 @@ export default function PaymentPlanBuilder({
           <div className="flex items-center gap-3">
             <button
               type="button"
+              onClick={saveToGhl}
+              disabled={isSaving || isSubmitting || isDownloading}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Save size={16} />
+              {isSaving ? "Saving…" : "Save to GHL"}
+            </button>
+            <button
+              type="button"
               onClick={downloadPdf}
-              disabled={isDownloading || isSubmitting}
+              disabled={isDownloading || isSubmitting || isSaving}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isDownloading ? "Downloading…" : "Download PDF"}
@@ -610,7 +699,7 @@ export default function PaymentPlanBuilder({
             <button
               type="button"
               onClick={generateAndSend}
-              disabled={isSubmitting || isDownloading}
+              disabled={isSubmitting || isDownloading || isSaving}
               className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-emerald-300"
             >
               <Send size={16} />
@@ -632,11 +721,11 @@ export default function PaymentPlanBuilder({
           <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl md:p-6">
             <div className="mb-4 flex items-center justify-between border-b border-slate-200 pb-3">
               <h2 className="text-2xl font-semibold tracking-tight text-slate-800">
-                Add Installment
+                {editingId ? "Edit Installment" : "Add Installment"}
               </h2>
               <button
                 type="button"
-                onClick={() => setModalOpen(false)}
+                onClick={() => { setModalOpen(false); setEditingId(null); setDraft(createEmptyDraft()); }}
                 className="rounded p-1 text-slate-500 hover:bg-slate-100"
                 aria-label="Close modal"
               >

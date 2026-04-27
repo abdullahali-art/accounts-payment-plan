@@ -339,7 +339,8 @@ function buildJsonBlob(body: PaymentPlanBody, xeroTrackingCode: string) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as PaymentPlanBody;
+    const body = (await request.json()) as PaymentPlanBody & { send_email?: boolean };
+    const sendEmail = body.send_email !== false;
     const { opp_id, contact_id, installments, deposit } = body;
 
     if (!opp_id || !contact_id || !Array.isArray(installments) || installments.length === 0) {
@@ -450,7 +451,29 @@ export async function POST(request: Request) {
       customFields
     });
 
-    // ── 6. Generate PDF ───────────────────────────────────────────────────
+    // ── 6. PDF + email (skipped when send_email: false) ───────────────────
+    if (!sendEmail) {
+      return NextResponse.json({
+        message: "Payment plan saved to GHL.",
+        data: {
+          opp_id,
+          contact_id,
+          xero_tracking_code: xeroTrackingCode,
+          payment_model: paymentModel,
+          gross_fee: grossFee,
+          net_fee: netFee,
+          commission_amount: commissionAmount,
+          university_portion: universityPortion,
+          outstanding_balance: netFee,
+          next_due_date: nextDueDate,
+          next_due_amount: nextDueAmount,
+          installments_remaining: installmentsRemaining,
+          ghl_fields_resolved: writeResult.fieldsResolved,
+          ghl_fields_unresolved: writeResult.fieldsUnresolved
+        }
+      });
+    }
+
     const pdfContext = await getPdfContext({
       apiKey: ghlApiKey,
       oppId: opp_id,
@@ -459,7 +482,6 @@ export async function POST(request: Request) {
     const pdfBuffer = generatePdfBuffer(body, pdfContext);
     const pdfFileName = `payment-plan-${opp_id}.pdf`;
 
-    // ── 7. Upload PDF + send email ────────────────────────────────────────
     const [uploadedPdfUrl, contactEmail] = await Promise.all([
       uploadPdfToGhl({
         apiKey: ghlApiKey,
@@ -482,11 +504,11 @@ export async function POST(request: Request) {
       contactId: contact_id,
       emailTo: contactEmail,
       subject: "Your Payment Plan",
-      html: `<p>Dear student,</p><p>Please find your payment plan attached.</p><p><strong>Plan Summary:</strong><br>${planSummary.replace(/ \| /g, "<br>")}</p><p>If you have any questions, please contact our team.</p>`,
+      html: `<p>Dear student,</p><p>Please find your payment plan attached.</p><p><strong>Plan Summary:</strong><br>${planSummary.replace(/ \| /g, "<br>")}</p>${xeroTrackingCode ? `<p>Please use the following reference code when making your payment:</p><p style="font-size:16px;font-weight:bold;color:#1e69b4;">${xeroTrackingCode}</p>` : ""}<p>If you have any questions, please contact our team.</p>`,
       attachmentUrls: [uploadedPdfUrl]
     });
 
-    // ── 8. Return success ─────────────────────────────────────────────────
+    // ── 7. Return success ─────────────────────────────────────────────────
     return NextResponse.json({
       message: "Payment plan saved to GHL and PDF emailed.",
       data: {
